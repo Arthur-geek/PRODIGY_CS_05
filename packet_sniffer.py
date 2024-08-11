@@ -1,67 +1,50 @@
-from scapy.all import sniff
-from scapy.layers.inet import IP, TCP, UDP
-import keyboard  # To listen for keyboard events
-
-# Log file path
-log_file = "packet_log.pcap"
-running = True  # Flag to control the sniffing process
+#!pip install scapy tabulate
+from scapy.all import sniff, IP, TCP, UDP, wrpcap, rdpcap
+import argparse
+from tabulate import tabulate
 
 def packet_callback(packet):
-    """
-    Callback function to process each captured packet and save details to a file.
-
-    Parameters:
-    - packet: The captured network packet.
-    """
-    global running
-    if not running:
-        return  # Stop processing packets if the flag is False
-
-    with open(log_file, "a") as f:
-        if IP in packet:
-            ip_layer = packet[IP]
-            src_ip = ip_layer.src
-            dst_ip = ip_layer.dst
-            protocol = ip_layer.proto
-            
-            if TCP in packet:
-                protocol = "TCP"
-                payload = bytes(packet[TCP].payload)
-            elif UDP in packet:
-                protocol = "UDP"
-                payload = bytes(packet[UDP].payload)
-            else:
-                payload = b""
-            
-            f.write(f"Packet: {protocol} | {src_ip} -> {dst_ip}\n")
-            f.write(f"Payload: {payload}\n\n")
-
-def on_key_event(event):
-    """
-    Callback function to handle key events.
-
-    Parameters:
-    - event: The keyboard event.
-    """
-    global running
-    if event.name == 'esc':
-        print("Escape key pressed. Stopping packet sniffer...")
-        running = False
+    packet_data = {
+        "Source IP": packet[IP].src if IP in packet else None,
+        "Destination IP": packet[IP].dst if IP in packet else None,
+        "Protocol": packet.sprintf("%IP.proto%"),
+        "Source Port": packet[TCP].sport if TCP in packet else (packet[UDP].sport if UDP in packet else None),
+        "Destination Port": packet[TCP].dport if TCP in packet else (packet[UDP].dport if UDP in packet else None),
+        "Payload": bytes(packet[TCP].payload if TCP in packet else (packet[UDP].payload if UDP in packet else b'')),
+    }
+    # create a table with keys as hearder
+    print(tabulate([packet_data], headers="keys"))
+    
+    # function to save the capture
+def save_packets(packets, filename):
+    wrpcap(filename, packets)
+    print(f"Packets saved to {filename}")
+    
+    # if you want to analyze one capture this function permit to read it
+def load_packets(filename):
+    packets = rdpcap(filename)
+    return packets
 
 def main():
-    """
-    Main function to start the packet sniffer and key listener.
-    """
-    print("Starting packet sniffer... Logging to", log_file)
     
-    # Start listening for key events
-    keyboard.on_press(on_key_event)
+    parser = argparse.ArgumentParser(description='Advanced Packet Sniffer')
+    parser.add_argument('--count', type=int, default=10, help='Number of packets to capture')
+    parser.add_argument('--filter', type=str, help='BPF filter for packet capture')
+    parser.add_argument('--output', type=str, help='File to save captured packets')
+    parser.add_argument('--input', type=str, help='File to read packets from')
+    args = parser.parse_args()
 
-    # Start packet sniffing
-    sniff(prn=packet_callback, store=False)
+    # verify if the user want to analyse an existence capture or no .
+    if args.input:
+        packets = load_packets(args.input)
+        for packet in packets:
+            packet_callback(packet)
+    else:
+        packets = sniff( prn=packet_callback, count=args.count, filter=args.filter)
+        print("Packet capture finished.")
+        # check if the user provide a output name to save the network traffic packet
+        if args.output:
+            save_packets(packets, args.output)
 
-    # Unregister the key event listener when done
-    keyboard.unhook_all()
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
